@@ -1,2 +1,6 @@
 keys/
 metadata/
+diff_module/patches/
+diff_module/packages/
+diff_module/extracted/
+diff_module/firmware_versions/
