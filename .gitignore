@@ -4,3 +4,6 @@ diff_module/patches/
 diff_module/packages/
 diff_module/extracted/
 diff_module/firmware_versions/
+ota_pipeline/signed_packages/
+ota_pipeline/demo_firmware/
+ota_pipeline/_extracted/
