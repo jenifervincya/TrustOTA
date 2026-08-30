@@ -5,13 +5,17 @@ This is the routine that (conceptually) runs ON THE ECU before an OTA
 update is accepted into the inactive A/B slot. It is the piece that
 will later be ported to C for STM32CubeIDE / Renesas FSP.
 
-Two checks, both must pass:
+Checks, all must pass:
   1. Trust chain check  - is the image key actually delegated by root?
-  2. Release check      - is the release metadata signed by that image
-                           key, AND does the firmware's actual SHA-256
-                           match what the signed metadata claims?
+  2. Revocation check    - has that delegated image key been rotated
+                            out and explicitly revoked? (defense in
+                            depth against a stale/cached delegation
+                            file still pointing at a retired key)
+  3. Release check       - is the release metadata signed by that image
+                            key, AND does the firmware's actual SHA-256
+                            match what the signed metadata claims?
 
-If either check fails, the update must be rejected and the ECU stays
+If any check fails, the update must be rejected and the ECU stays
 on its current running slot (fail-safe default).
 """
 
@@ -20,6 +24,7 @@ import os
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 from hash_utils import sha256_file
+from key_rotation import is_key_revoked
 
 KEY_DIR = os.path.join(os.path.dirname(__file__), "keys")
 
@@ -34,7 +39,7 @@ def _load_root_public() -> Ed25519PublicKey:
 
 
 def verify_delegation(delegation_path: str) -> Ed25519PublicKey:
-    """Check that the image key was validly delegated by root. Returns the trusted image public key."""
+    """Check that the image key was validly delegated by root AND hasn't since been revoked. Returns the trusted image public key."""
     with open(delegation_path) as f:
         delegation = json.load(f)
 
@@ -47,7 +52,10 @@ def verify_delegation(delegation_path: str) -> Ed25519PublicKey:
     except InvalidSignature:
         raise VerificationError("Delegation signature invalid — image key NOT trusted by root")
 
-    print("[verify] delegation OK — image key is trusted by root")
+    if is_key_revoked(image_pub_bytes.hex(), role="image"):
+        raise VerificationError("Delegated image key has been REVOKED (rotated out) — reject stale delegation")
+
+    print("[verify] delegation OK — image key is trusted by root and not revoked")
     return Ed25519PublicKey.from_public_bytes(image_pub_bytes)
 
 
@@ -83,7 +91,7 @@ def verify_release(release_path: str, firmware_path: str, trusted_image_key: Ed2
 
 
 def full_verification(delegation_path: str, release_path: str, firmware_path: str) -> bool:
-    """Run the full two-stage gate. Returns True if update should be accepted."""
+    """Run the full gate sequence. Returns True if update should be accepted."""
     try:
         trusted_image_key = verify_delegation(delegation_path)
         verify_release(release_path, firmware_path, trusted_image_key)
