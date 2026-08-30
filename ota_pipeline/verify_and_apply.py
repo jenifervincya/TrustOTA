@@ -39,6 +39,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey  
 from cryptography.exceptions import InvalidSignature  # noqa: E402
 import bsdiff4  # noqa: E402
 
+from rollback_manager import stage_update  # noqa: E402
+
 CRYPTO_KEY_DIR = os.path.join(BASE, "crypto_module", "keys")
 CRYPTO_META_DIR = os.path.join(BASE, "crypto_module", "metadata")
 
@@ -137,9 +139,19 @@ def apply_signed_update(package_path: str, running_firmware_path: str, output_pa
             )
         print(f"[GATE 3] PASS - reconstructed image matches signed target hash")
 
+        # --- STAGE FOR ROLLBACK-MONITORED BOOT ---
+        # All 3 gates passing only proves the package is authentic and
+        # intact - it says nothing about whether the firmware actually
+        # runs. Hand off to rollback_manager: write to the inactive
+        # slot, flip it active, and open a boot-attempt window. The
+        # slot is only COMMITTED once it proves itself healthy at boot
+        # (see rollback_manager.record_boot_attempt).
+        print("\n[STAGE] Handing off to rollback manager (pending verified boot)...")
+        stage_update(version=manifest["target_version"], sha256=manifest["target_sha256"])
+
         print("\n" + "=" * 60)
         print(f"ALL GATES PASSED - update ACCEPTED: {manifest['ecu_target']} -> v{manifest['target_version']}")
-        print("Safe to write to inactive A/B slot and switch on next boot.")
+        print("Staged to inactive A/B slot, active on next boot - pending boot health check.")
         print("=" * 60)
         return True
 
