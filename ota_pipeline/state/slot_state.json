@@ -1,5 +1,5 @@
 {
-  "active_slot": "A",
+  "active_slot": "B",
   "slots": {
     "A": {
       "version": "1.3.0",
@@ -8,8 +8,8 @@
     },
     "B": {
       "version": "1.3.0",
-      "sha256": "aaa...111",
-      "status": "good"
+      "sha256": "5499fa67427ba691dea2ec4be7ef40df539addb8922b82c3eddbce9cf91e6e1e",
+      "status": "pending"
     }
   },
   "last_known_good_slot": "B",
@@ -48,6 +48,10 @@
     {
       "t": 1788082395,
       "event": "STAGED v1.3.0 to slot A (now active), boot-attempt window open"
+    },
+    {
+      "t": 1788085090,
+      "event": "STAGED v1.3.0 to slot B (now active), boot-attempt window open"
     }
   ]
 }

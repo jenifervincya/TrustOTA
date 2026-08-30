@@ -6,12 +6,13 @@ Simulates:
      shares most of its bytes with the old one (realistic: firmware
      updates usually change a small fraction of the binary)
   2. Creating a binary diff/patch between them
-  3. Packaging the patch with version-compatibility metadata
+  3. Packaging the patch (compressed) with version-compatibility metadata
   4. ECU-side: checking compatibility against its running firmware
      -> should PASS when running the correct base version
      -> should FAIL when running a different/unexpected version
-  5. ECU-side: applying the patch to reconstruct v1.3.0, and
-     confirming the reconstructed image matches expected hash
+  5. ECU-side: extracting (decompressing) and applying the patch to
+     reconstruct v1.3.0, confirming the reconstructed image matches
+     the expected hash
 """
 
 import os
@@ -61,7 +62,7 @@ def main():
     patch_path = create_diff(old_path, new_path, "v1.2.0_to_v1.3.0.patch")
 
     print("\n" + "=" * 60)
-    print("STEP 3: Build update package (.toup) with version metadata")
+    print("STEP 3: Build update package (.toup) with version metadata + compression")
     print("=" * 60)
     pkg_path = build_package(
         old_path, new_path, patch_path,
@@ -83,7 +84,7 @@ def main():
     ok_wrong = check_compatibility(pkg_path, wrong_version_path)
 
     print("\n" + "=" * 60)
-    print("STEP 5: Apply patch on ECU (only proceeds because 4a passed)")
+    print("STEP 5: Extract (decompress) + apply patch on ECU (only proceeds because 4a passed)")
     print("=" * 60)
     if ok:
         extract_dir = os.path.join(BASE, "extracted")
@@ -99,14 +100,24 @@ def main():
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    patch_size = os.path.getsize(patch_path)
+    import zipfile, json as _json
+    with zipfile.ZipFile(pkg_path) as zf:
+        pkg_manifest = _json.loads(zf.read("manifest.json"))
     new_size = os.path.getsize(new_path)
-    print(f"Full image size      : {new_size} bytes")
-    print(f"Patch size            : {patch_size} bytes ({100*patch_size/new_size:.1f}% of full image)")
-    print(f"Correct-version check : {'PASS (correct)' if ok else 'FAIL (WRONG)'}")
-    print(f"Wrong-version check   : {'FAIL (correct)' if not ok_wrong else 'PASS (WRONG)'}")
+    uncompressed_patch_size = pkg_manifest["patch_size_uncompressed"]
+    shipped_patch_size = pkg_manifest["patch_size"]
+    method = pkg_manifest["compression"]
+    print(f"Full image size            : {new_size} bytes")
+    print(f"Raw bsdiff patch           : {uncompressed_patch_size} bytes ({100*uncompressed_patch_size/new_size:.1f}% of full image)")
+    print(f"Shipped patch (method={method}) : {shipped_patch_size} bytes ({100*shipped_patch_size/new_size:.1f}% of full image)")
+    if method == "zlib":
+        print(f"Compression saved an extra : {100*(1 - shipped_patch_size/uncompressed_patch_size):.1f}% on top of the diff")
+    else:
+        print(f"Compression skipped - raw patch was already smaller (typical for high-entropy test data)")
+    print(f"Correct-version check      : {'PASS (correct)' if ok else 'FAIL (WRONG)'}")
+    print(f"Wrong-version check        : {'FAIL (correct)' if not ok_wrong else 'PASS (WRONG)'}")
     if ok:
-        print(f"Patch application     : {'reconstructed image matches (correct)' if match else 'MISMATCH (WRONG)'}")
+        print(f"Patch application          : {'reconstructed image matches (correct)' if match else 'MISMATCH (WRONG)'}")
 
 
 if __name__ == "__main__":

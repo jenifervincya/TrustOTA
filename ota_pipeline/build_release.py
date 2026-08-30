@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(BASE, "diff_module"))
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from create_diff import create_diff  # noqa: E402
+from compress_utils import compress_patch_if_beneficial  # noqa: E402
 
 CRYPTO_KEY_DIR = os.path.join(BASE, "crypto_module", "keys")
 OUT_DIR = os.path.join(os.path.dirname(__file__), "signed_packages")
@@ -65,6 +66,9 @@ def build_signed_release(
     patch_name = f"{ecu_target}_{base_version}_to_{target_version}.patch"
     patch_path = create_diff(old_firmware_path, new_firmware_path, patch_name)
 
+    # 1b. Compress the patch before it ships, but only if it's actually smaller
+    shipped_patch_path, method, uncompressed_size, shipped_size = compress_patch_if_beneficial(patch_path)
+
     # 2. Build the manifest (same fields as update_package.py, kept inline here
     #    so the manifest can be signed before zipping)
     manifest = {
@@ -73,8 +77,9 @@ def build_signed_release(
         "base_sha256": _sha256_file(old_firmware_path),
         "target_version": target_version,
         "target_sha256": _sha256_file(new_firmware_path),
-        "patch_size": os.path.getsize(patch_path),
-        "compression": "none",
+        "patch_size": shipped_size,
+        "patch_size_uncompressed": uncompressed_size,
+        "compression": method,
     }
 
     # 3. Sign the canonical manifest bytes with the image key
@@ -95,10 +100,11 @@ def build_signed_release(
 
     with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("signed_manifest.json", json.dumps(signed_manifest, indent=2))
-        zf.write(patch_path, arcname="patch.bin")
+        zf.write(shipped_patch_path, arcname="patch.bin")
 
     print(f"\n[build_release] SIGNED package ready -> {pkg_path}")
-    print(f"[build_release] patch size = {manifest['patch_size']} bytes")
+    print(f"[build_release] patch size = {manifest['patch_size']} bytes "
+          f"(was {manifest['patch_size_uncompressed']} bytes before compression)")
     return pkg_path
 
 

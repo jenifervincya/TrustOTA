@@ -17,17 +17,17 @@ fallback is requested instead of a patch.
 
 Package layout (a package is just a zip with two entries):
     manifest.json   - metadata below
-    patch.bin       - the raw bsdiff patch bytes
+    patch.bin       - the patch bytes, COMPRESSED (see compress_utils.py)
 
 manifest.json fields:
-    ecu_target      - e.g. "stm32_nucleo_f411re"
-    base_version    - version string the patch expects as input
-    base_sha256     - sha256 of the expected old firmware
-    target_version  - version string the patch produces
-    target_sha256   - sha256 of the expected new firmware (post-patch)
-    patch_size      - size of patch.bin in bytes
-    compression     - compression used ("none" for now; bsdiff patches
-                       are already fairly compact, but see note below)
+    ecu_target             - e.g. "stm32_nucleo_f411re"
+    base_version           - version string the patch expects as input
+    base_sha256             - sha256 of the expected old firmware
+    target_version           - version string the patch produces
+    target_sha256            - sha256 of the expected new firmware (post-patch)
+    patch_size                - size of patch.bin AS SHIPPED (compressed) in bytes
+    patch_size_uncompressed  - size of the raw bsdiff patch before compression
+    compression                - compression method used on patch.bin (e.g. "zlib")
 """
 
 import os
@@ -35,6 +35,7 @@ import json
 import zipfile
 
 from hash_utils_local import sha256_file
+from compress_utils import compress_patch_if_beneficial, decompress_patch
 
 PKG_DIR = os.path.join(os.path.dirname(__file__), "packages")
 
@@ -49,14 +50,17 @@ def build_package(
 ) -> str:
     os.makedirs(PKG_DIR, exist_ok=True)
 
+    shipped_patch_path, method, uncompressed_size, shipped_size = compress_patch_if_beneficial(patch_path)
+
     manifest = {
         "ecu_target": ecu_target,
         "base_version": base_version,
         "base_sha256": sha256_file(old_firmware_path),
         "target_version": target_version,
         "target_sha256": sha256_file(new_firmware_path),
-        "patch_size": os.path.getsize(patch_path),
-        "compression": "none",
+        "patch_size": shipped_size,
+        "patch_size_uncompressed": uncompressed_size,
+        "compression": method,
     }
 
     pkg_name = f"{ecu_target}_{base_version}_to_{target_version}.toup"
@@ -64,10 +68,11 @@ def build_package(
 
     with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-        zf.write(patch_path, arcname="patch.bin")
+        zf.write(shipped_patch_path, arcname="patch.bin")
 
     print(f"[package] built update package -> {pkg_path}")
-    print(f"[package] {base_version} -> {target_version}, patch = {manifest['patch_size']} bytes")
+    print(f"[package] {base_version} -> {target_version}, patch = {manifest['patch_size']} bytes "
+          f"(was {manifest['patch_size_uncompressed']} bytes uncompressed)")
     return pkg_path
 
 
@@ -91,15 +96,26 @@ def check_compatibility(pkg_path: str, running_firmware_path: str) -> bool:
 
 
 def extract_package(pkg_path: str, extract_dir: str):
-    """Unpack manifest.json and patch.bin from a .toup package."""
+    """
+    Unpack manifest.json and patch.bin from a .toup package, then
+    decompress patch.bin back into the raw bsdiff patch bytes that
+    apply_patch()/bsdiff4 expect.
+    """
     os.makedirs(extract_dir, exist_ok=True)
     with zipfile.ZipFile(pkg_path) as zf:
         zf.extractall(extract_dir)
     manifest_path = os.path.join(extract_dir, "manifest.json")
-    patch_path = os.path.join(extract_dir, "patch.bin")
+    compressed_patch_path = os.path.join(extract_dir, "patch.bin")
     with open(manifest_path) as f:
         manifest = json.load(f)
-    return manifest, patch_path
+
+    if manifest.get("compression") == "zlib":
+        raw_patch_path = os.path.join(extract_dir, "patch_raw.bin")
+        decompress_patch(compressed_patch_path, raw_patch_path)
+        return manifest, raw_patch_path
+
+    # No compression recorded - patch.bin is already raw
+    return manifest, compressed_patch_path
 
 
 if __name__ == "__main__":
